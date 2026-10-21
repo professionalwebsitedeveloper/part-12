@@ -1,0 +1,77 @@
+name: "Exercise: 5"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-5:
+    name: Exercise 5 - Containerizing a Node application
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      IMAGE_NAME: todo-backend
+      CONTAINER_NAME: fsopen-exercise5
+      ARTIFACT_DIR: ci-artifacts
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Show the Docker installation
+        run: |
+          docker version
+          echo "Server version: $(docker info --format '{{.ServerVersion}}')"
+
+      - name: Verify the Dockerfile exists
+        run: |
+          set -euo pipefail
+          test -s todo-app/todo-backend/Dockerfile
+          echo "Dockerfile found"
+
+      - name: Build the todo-backend image
+        run: |
+          set -euo pipefail
+          docker build -t "$IMAGE_NAME" todo-app/todo-backend
+
+      - name: Run the todo-backend container
+        run: |
+          set -euo pipefail
+          docker rm -f "$CONTAINER_NAME" > /dev/null 2>&1 || true
+          docker run -d --name "$CONTAINER_NAME" -p 3000:3000 "$IMAGE_NAME"
+          # Wait for the server to become ready.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/ > /dev/null 2>&1; then
+              echo "Server is ready"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/ > /dev/null
+
+      - name: Verify the visit counter increases
+        run: |
+          set -euo pipefail
+          FIRST=$(curl -fsS http://localhost:3000/)
+          echo "First response: $FIRST"
+          FIRST_N=$(echo "$FIRST" | grep -oE '[0-9]+')
+
+          SECOND=$(curl -fsS http://localhost:3000/)
+          echo "Second response: $SECOND"
+          SECOND_N=$(echo "$SECOND" | grep -oE '[0-9]+')
+
+          if [ "$SECOND_N" -eq $((FIRST_N + 1)) ]; then
+            echo "::notice::The visit counter increased from $FIRST_N to $SECOND_N"
+          else
+            echo "::error::Visit counter did not increase by 1 (was $FIRST_N, now $SECOND_N)"
+            exit 1
+          fi
+
+      - name: Stop and remove the container
+        if: always()
+        run: |
+          docker stop "$CONTAINER_NAME" > /dev/null 2>&1 || true
+          docker rm "$CONTAINER_NAME" > /dev/null 2>&1 || true
