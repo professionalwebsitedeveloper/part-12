@@ -8,3 +8,6 @@ todo-app/mongo_data/
 todo-app/test-results/
 todo-app/playwright-report/
 todo-app/playwright/.cache/
+
+# Transcripts that the Exercise workflows write while they run
+ci-artifacts/

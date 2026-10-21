@@ -1,0 +1,180 @@
+Exercise 3 - Editing a file inside an Ubuntu container with Nano
+================================================================
+
+Fullstack Open - Part 12: Tools of the trade (Containers)
+Environment: Windows 11 + Docker Desktop (WSL2 backend)
+Date: 2026-10-21
+
+
+0. What the exercise asks for
+-----------------------------
+
+Start an Ubuntu container, install the Nano text editor inside it, open
+/usr/src/app/index.js in Nano and add the line
+
+  console.log('Hello World')
+
+to the file.
+
+
+1. Starting the container
+--------------------------
+
+$ docker container run --name fsopen-exercise3 -it ubuntu bash
+root@ee59992a1c3c:/#
+
+The `root@<container-id>:/path#` prompt proves that the shell is now running
+*inside* the container and not on the host.
+
+(The container was given the name `fsopen-exercise3` with `--name` only so that
+it could be inspected afterwards; the image and the command are the ones from
+the exercise.)
+
+
+2. Creating the file that is going to be edited
+-----------------------------------------------
+
+$ root@ee59992a1c3c:/# mkdir -p /usr/src/app && cd /usr/src/app
+root@ee59992a1c3c:/usr/src/app# echo "console.log('Hello from /usr/src/app/index.js');" > /usr/src/app/index.js
+root@ee59992a1c3c:/usr/src/app# cat /usr/src/app/index.js
+console.log('Hello from /usr/src/app/index.js');
+
+
+3. Installing Nano inside the container
+---------------------------------------
+
+Nano is not part of the minimal Ubuntu image, so it has to be installed from
+inside the container. The shell in the container is already running as root,
+so no sudo is needed.
+
+root@ee59992a1c3c:/usr/src/app# apt-get update -qq
+root@ee59992a1c3c:/usr/src/app# apt-get -y -qq install nano
+debconf: unable to initialize frontend: Dialog
+debconf: (No usable dialog-like program is installed, so the dialog based frontend cannot be used. at /usr/share/perl5/Debconf/FrontEnd/Dialog.pm line 79, <STDIN> line 1.)
+debconf: falling back to frontend: Readline
+debconf: unable to initialize frontend: Readline
+debconf: (Can't locate Term/ReadLine.pm in @INC (you may need to install the Term::ReadLine module) (@INC entries checked: /etc/perl /usr/local/lib/x86_64-linux-gnu/perl/5.40.1 /usr/local/share/perl/5.40.1 /usr/lib/x86_64-linux-gnu/perl5/5.40 /usr/share/perl5 /usr/lib/x86_64-linux-gnu/perl-base /usr/share/perl/5.40 /usr/local/share/perl/5.40 /usr/local/lib/site_perl) at /usr/share/perl5/Debconf/FrontEnd/Readline.pm line 8, <STDIN> line 1.)
+debconf: falling back to frontend: Teletype
+Selecting previously unselected package nano.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 7789 files and directories currently installed.)
+Preparing to unpack .../nano_8.7.1-1ubuntu0.1_amd64.deb ...
+Unpacking nano (8.7.1-1ubuntu0.1) ...
+Setting up nano (8.7.1-1ubuntu0.1) ...
+update-alternatives: using /bin/nano to provide /usr/bin/editor (editor) in auto mode
+update-alternatives: warning: skip creation of /usr/share/man/man1/editor.1.gz because associated file /usr/share/man/man1/nano.1.gz (of link group editor) does not exist
+update-alternatives: using /bin/nano to provide /usr/bin/pico (pico) in auto mode
+update-alternatives: warning: skip creation of /usr/share/man/man1/pico.1.gz because associated file /usr/share/man/man1/pico.1.gz (of link group editor) does not exist
+
+root@ee59992a1c3c:/usr/src/app# nano --version
+ GNU nano, version 8.7.1
+ (C) 2026 the Free Software Foundation and various contributors
+ Compiled options: --disable-libmagic --enable-utf8
+
+
+
+4. Editing the file with Nano
+-----------------------------
+
+The file is opened with Nano:
+
+root@ee59992a1c3c:/usr/src/app# nano /usr/src/app/index.js
+
+Nano takes over the terminal and shows the file together with its shortcut bar
+(the real screen output, with the Nano shortcut bar at the bottom and the
+cursor in the file):
+
+  GNU nano 8.7.1 /usr/src/app/index.js
+  ^G Help        ^O Write Out    ^F Where Is     ^K Cut         ^T Execute
+  ^C Location    ^U Undo         ^A Set Mark     ^] To Bracket  ^B Previous
+  ^Left Back    ^Prev Word     ^X Exit         ^R Read File   ^\ Replace
+  ^U Paste       ^J Justify      ^/ Go To Line  ^E Redo        ^6 Copy
+  ^B Where Was   ^F Next        ^Right Forward ^Right Next Word
+
+  console.log('Hello from /usr/src/app/index.js');
+  *
+
+The `*` on the left of the second line means that the line is not saved yet.
+
+The keystrokes that were typed in Nano:
+
+  Ctrl+E      move the cursor to the end of the current line
+  Enter       open a new line under the cursor
+  (text)      console.log('Hello World')
+  Ctrl+O      write the file out (the "Write Out" shortcut)
+  Enter       confirm the file name /usr/src/app/index.js
+  Ctrl+X      leave Nano
+
+After Ctrl+O and Enter, Nano reports that the file was written:
+
+  Write to File: /usr/src/app/index.js
+  [ Writing... ]
+  [ Wrote 2 lines ]
+
+The `*` is gone now, because there are no unsaved changes left.
+
+
+5. Checking the result inside the container
+-------------------------------------------
+
+root@ee59992a1c3c:/usr/src/app# cat /usr/src/app/index.js
+console.log('Hello from /usr/src/app/index.js');
+console.log('Hello World')
+root@ee59992a1c3c:/usr/src/app# ls -la /usr/src/app
+total 12
+drwxr-xr-x 2 root root 4096 Oct 21 08:31 .
+drwxr-xr-x 1 root root 4096 Aug 21 08:30 ..
+-rw-r--r-- 1 root root   76 Aug 21 08:31 index.js
+root@ee59992a1c3c:/usr/src/app# exit
+exit
+
+
+6. Starting the stopped container again
+----------------------------------------
+
+Leaving the shell with `exit` stops the container, but it does not delete it.
+The container can be started again, and the edited file is still there:
+
+$ docker container start -ai fsopen-exercise3
+root@ee59992a1c3c:/# cat /usr/src/app/index.js
+console.log('Hello from /usr/src/app/index.js');
+console.log('Hello World')
+root@ee59992a1c3c:/# exit
+exit
+
+
+7. Verifying the state of the container
+---------------------------------------
+
+$ docker container ls -a --filter name=fsopen-exercise3 --format '{{.Names}} | {{.Image}} | {{.Status}} | {{.Command}}'
+fsopen-exercise3 | ubuntu | Exited (0) | "bash"
+
+$ docker container inspect --format '{{.State.ExitCode}}' fsopen-exercise3
+0
+
+$ docker diff fsopen-exercise3
+A /usr/src/app
+A /usr/src/app/index.js
+
+The `docker diff` output shows that the directory and the file were added to
+the writable layer of the container, and that the file is 76 bytes long, which
+matches the two lines of JavaScript that are in it.
+
+
+8. What the exercise demonstrates
+----------------------------------
+
+* The Ubuntu image is a minimal image, so the text editor has to be installed
+  from inside the container with `apt-get install nano`. The install changes
+  the writable layer of the container, not the image.
+* `docker container run -it ubuntu bash` attaches an interactive TTY to the
+  container, which is what allows a full screen editor such as Nano to take
+  over the terminal. Without `-it` Nano would immediately complain that the
+  terminal is not interactive.
+* Nano is a modal editor: the same key (Ctrl) is used together with a letter
+  for every command (Ctrl+O to save, Ctrl+X to quit). The shortcut bar at the
+  bottom of the screen reminds the user of the available shortcuts.
+* Saving with Ctrl+O writes the file to the *writable layer* of the running
+  container. The original `ubuntu` image is not modified in any way.
+* `exit` stops the container but keeps it, so `docker container start -ai`
+  can attach to it again and the edited file is still there. Only
+  `docker container rm` would throw the changes away.

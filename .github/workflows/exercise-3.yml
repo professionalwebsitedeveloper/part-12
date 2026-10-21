@@ -1,0 +1,325 @@
+name: "Exercise: 3"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-3:
+    name: Exercise 3 - Editing a file with Nano
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      CONTAINER_NAME: fsopen-exercise3
+      ARTIFACT_DIR: ci-artifacts
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Show the Docker installation
+        run: |
+          docker version
+          echo "Server version: $(docker info --format '{{.ServerVersion}}')"
+
+      - name: Install the tools that drive the interactive session
+        run: |
+          set -euo pipefail
+
+          # 'script' allocates the pseudo terminal that 'docker run -it' needs.
+          if ! command -v script > /dev/null; then
+            echo "Installing bsdutils, which provides the 'script' utility"
+            sudo apt-get update
+            sudo apt-get install -y bsdutils
+          fi
+          # Not every implementation of 'script' understands '--version', so the
+          # output is not checked and only the presence of the tool matters.
+          script --version || echo "script is available: $(command -v script)"
+
+          # 'expect' types the keystrokes into the pseudo terminal. It is not
+          # part of the runner image, so it is installed here.
+          if ! command -v expect > /dev/null; then
+            echo "Installing expect, which types the keystrokes into the session"
+            sudo apt-get update
+            sudo apt-get install -y expect
+          fi
+          expect -v || echo "expect is available: $(command -v expect)"
+
+      - name: Run the interactive Ubuntu session and edit the file with Nano
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$ARTIFACT_DIR"
+
+          # The session is driven by 'expect', which sends the same keystrokes
+          # that a developer would type. The script is written to a file first,
+          # because 'expect' has to read it from a real file.
+          cat > "$ARTIFACT_DIR/expect-session.exp" <<'EXPECT_EOF'
+          set timeout 900
+          set name $env(CONTAINER_NAME)
+
+          # Ubuntu root prompt, e.g. "root@fd45b1f85f19:/usr/src/app# ".
+          # It is terminated by a carriage return, so no end-of-line anchor is used.
+          set PROMPT {root@[0-9a-f]+:\S*# }
+
+          # 'script' allocates the pseudo terminal that 'docker run -it' requires.
+          spawn script -q -e -c "stty cols 200 rows 50; docker container run --name $name -it ubuntu bash" $env(ARTIFACT_DIR)/session.raw
+
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: no container prompt"; exit 1 }
+          }
+          after 1000
+
+          send -- "mkdir -p /usr/src/app && cd /usr/src/app\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: cd failed"; exit 1 }
+          }
+          after 800
+
+          send -- "echo \"console.log('Hello from /usr/src/app/index.js');\" > /usr/src/app/index.js\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: seed file failed"; exit 1 }
+          }
+          after 800
+
+          send -- "cat /usr/src/app/index.js\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: cat failed"; exit 1 }
+          }
+          after 800
+
+          send -- "apt-get update -qq\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: apt-get update failed"; exit 1 }
+          }
+          after 1500
+
+          send -- "apt-get -y -qq install nano\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: apt-get install nano failed"; exit 1 }
+          }
+          after 1500
+
+          send -- "nano --version\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: nano --version failed"; exit 1 }
+          }
+          after 800
+
+          # Open the file in nano.
+          send -- "nano /usr/src/app/index.js\r"
+          expect {
+              -re {GNU nano [0-9.]+} { }
+              timeout { puts "TIMEOUT: nano did not start"; exit 1 }
+          }
+          after 3000
+
+          # Ctrl+E moves the cursor to the end of the current line.
+          send -- "\x05"
+          after 1000
+
+          # Enter opens a new line and the required line of code is typed.
+          send -- "\r"
+          after 1000
+          send -- "console.log('Hello World')"
+          after 1500
+
+          # Ctrl+O writes the file out, Enter confirms the file name.
+          send -- "\x0f"
+          after 2000
+          send -- "\r"
+          after 2500
+
+          # Ctrl+X leaves nano.
+          send -- "\x18"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: nano did not exit"; exit 1 }
+          }
+          after 1500
+
+          send -- "cat /usr/src/app/index.js\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: final cat failed"; exit 1 }
+          }
+          after 800
+
+          send -- "ls -la /usr/src/app\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: ls failed"; exit 1 }
+          }
+          after 800
+
+          # Leaving the shell stops the container.
+          send -- "exit\r"
+          expect {
+              -re {\$ } { }
+              eof { }
+              timeout { puts "TIMEOUT: container did not exit"; exit 1 }
+          }
+          after 2500
+          catch { close }
+
+          # ------------------------------------------------------------------
+          # Phase 2: start the stopped container again and read the file
+          # ------------------------------------------------------------------
+          spawn script -q -e -c "stty cols 200 rows 50; docker container start -ai $name" $env(ARTIFACT_DIR)/restart.raw
+
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: no prompt after the restart"; exit 1 }
+          }
+          after 1500
+
+          send -- "cat /usr/src/app/index.js\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: cat after the restart failed"; exit 1 }
+          }
+          after 800
+
+          send -- "exit\r"
+          expect {
+              -re {\$ } { }
+              eof { }
+              timeout { puts "TIMEOUT: container did not exit"; exit 1 }
+          }
+          after 2000
+          catch { close }
+
+          puts "SESSION_DONE"
+          EXPECT_EOF
+
+          docker container rm -f "$CONTAINER_NAME" > /dev/null 2>&1 || true
+
+          expect "$ARTIFACT_DIR/expect-session.exp"
+
+      - name: Strip the terminal control codes from the transcripts
+        run: |
+          set -euo pipefail
+          # Remove the ANSI escape sequences and the CR characters that the
+          # pseudo terminal adds, so the transcript is readable.
+          # The character ranges are written in hex on purpose: in a sed bracket
+          # expression "[ -\/]" would be read as the range from space to
+          # backslash and would swallow the first character of the next word.
+          strip() {
+            sed -e 's/\x1b\[[0-9;?]*[\x20-\x2f]*[\x40-\x7e]//g' \
+                -e 's/\x1b\][^\x07]*\x07//g' \
+                -e 's/\x1b\\//g' \
+                -e 's/\x07//g' \
+                -e 's/\r//g' \
+                "$1"
+          }
+
+          strip "$ARTIFACT_DIR/session.raw"  > "$ARTIFACT_DIR/session-stripped.txt"
+          strip "$ARTIFACT_DIR/restart.raw" > "$ARTIFACT_DIR/restart-stripped.txt"
+
+          # The pseudo terminal echoes the fed input once before the shell takes
+          # over the terminal. Only the part from the first prompt onwards is the
+          # real session, so the leading echo is dropped.
+          {
+            head -n 1 "$ARTIFACT_DIR/session-stripped.txt"
+            awk 'found || /root@[0-9a-f]+:/ { found = 1; print }' "$ARTIFACT_DIR/session-stripped.txt"
+          } > "$ARTIFACT_DIR/ubuntu-session.txt"
+
+          {
+            head -n 1 "$ARTIFACT_DIR/restart-stripped.txt"
+            awk 'found || /root@[0-9a-f]+:/ { found = 1; print }' "$ARTIFACT_DIR/restart-stripped.txt"
+          } > "$ARTIFACT_DIR/ubuntu-restart.txt"
+
+          cat "$ARTIFACT_DIR/ubuntu-session.txt"
+          echo
+          echo "=== after the container was started again ==="
+          cat "$ARTIFACT_DIR/ubuntu-restart.txt"
+
+      - name: Verify the interactive session
+        run: |
+          set -euo pipefail
+          SESSION="$ARTIFACT_DIR/ubuntu-session.txt"
+          RESTART="$ARTIFACT_DIR/ubuntu-restart.txt"
+
+          # The prompt shows the shell is running inside the container.
+          grep -qE 'root@[0-9a-f]+:[^ ]*#' "$SESSION"
+
+          # Nano has to be installed inside the container.
+          grep -qF 'apt-get -y -qq install nano' "$SESSION"
+          grep -qE 'GNU nano, version [0-9.]+' "$SESSION"
+
+          # The file has to be opened in Nano.
+          grep -qF 'nano /usr/src/app/index.js' "$SESSION"
+
+          # Nano has to report that the file was written.
+          grep -qF 'Wrote 2 lines' "$SESSION"
+
+          # The file has to contain both lines of code.
+          grep -qx "console.log('Hello from /usr/src/app/index.js');" "$SESSION"
+          grep -qx "console.log('Hello World')" "$SESSION"
+
+          # The file has to exist inside the container.
+          grep -qE '^-rw-r--r-- +1 root root +[0-9]+ .*index\.js$' "$SESSION"
+
+          # The edited file has to still be there after the restart.
+          grep -qx "console.log('Hello World')" "$RESTART"
+
+          echo "::notice::The interactive session produced the expected output"
+
+      - name: Verify the container filesystem after exit
+        run: |
+          set -euo pipefail
+
+          docker container ls -a --filter "name=$CONTAINER_NAME" \
+            --format '{{.Names}} | {{.Image}} | {{.Status}} | {{.Command}}'
+
+          EXIT_CODE="$(docker container inspect --format '{{.State.ExitCode}}' "$CONTAINER_NAME")"
+          echo "Container exit code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::The container did not exit cleanly (exit code $EXIT_CODE)"
+            exit 1
+          fi
+
+          # The changes survive 'exit', because the container is only stopped.
+          docker cp "$CONTAINER_NAME:/usr/src/app/index.js" "$ARTIFACT_DIR/index.js"
+          echo "--- /usr/src/app/index.js ---"
+          cat "$ARTIFACT_DIR/index.js"
+          grep -qx "console.log('Hello from /usr/src/app/index.js');" "$ARTIFACT_DIR/index.js"
+          grep -qx "console.log('Hello World')" "$ARTIFACT_DIR/index.js"
+
+          # The file was added to the writable layer of the container.
+          docker diff "$CONTAINER_NAME" | grep -E '^A /usr/src/app(/index\.js)?$'
+
+      - name: Verify the answer for the exercise
+        run: |
+          set -euo pipefail
+          ANSWER="answers/exercise3.txt"
+
+          if [ ! -s "$ANSWER" ]; then
+            echo "::error::$ANSWER is missing or empty"
+            exit 1
+          fi
+
+          grep -qF 'docker container run --name fsopen-exercise3 -it ubuntu bash' "$ANSWER"
+          grep -qF '/usr/src/app/index.js' "$ANSWER"
+          grep -qF "console.log('Hello World')" "$ANSWER"
+          grep -qF 'Exited (0)' "$ANSWER"
+
+          echo "::notice::$ANSWER documents the session"
+
+      - name: Upload the session transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exercise-3-ubuntu-session
+          path: ci-artifacts/
+          retention-days: 7
