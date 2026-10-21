@@ -1,0 +1,180 @@
+Exercise 4 - Installing Node.js inside an Ubuntu container
+=========================================================
+
+Fullstack Open - Part 12: Tools of the trade (Containers)
+Environment: Windows 11 + Docker Desktop (WSL2 backend)
+Date: 2026-10-21
+
+
+0. What the exercise asks for
+-----------------------------
+
+Start an Ubuntu container, install Node.js inside it and run the index file of
+the previous exercise with it:
+
+  node /usr/src/app/index.js
+
+The index file has to print "Hello World" when it is run with Node.js.
+
+
+1. Starting the container
+--------------------------
+
+$ docker container run --name fsopen-exercise4 -it ubuntu bash
+root@aaa0c613d613:/#
+
+The `root@<container-id>:/path#` prompt proves that the shell is now running
+*inside* the container and not on the host.
+
+(The container was given the name `fsopen-exercise4` with `--name` only so that
+it could be inspected afterwards; the image and the command are the ones from
+the exercise.)
+
+
+2. Creating the file that is going to be run
+---------------------------------------------
+
+The file is the one that was created in Exercise 3, so it is created again
+here with the same two lines of code:
+
+root@aaa0c613d613:/# mkdir -p /usr/src/app && cd /usr/src/app
+root@aaa0c613d613:/usr/src/app# echo "console.log('Hello from /usr/src/app/index.js');" > /usr/src/app/index.js
+root@aaa0c613d613:/usr/src/app# echo "console.log('Hello World')" >> /usr/src/app/index.js
+root@aaa0c613d613:/usr/src/app# cat /usr/src/app/index.js
+console.log('Hello from /usr/src/app/index.js');
+console.log('Hello World')
+
+
+3. Installing curl inside the container
+----------------------------------------
+
+The Node.js installation script is downloaded from the internet, so `curl` is
+needed first. Curl is not part of the minimal Ubuntu image either, so it is
+installed from inside the container. The shell in the container is already
+running as root, so no sudo is needed.
+
+root@aaa0c613d613:/usr/src/app# apt-get update -qq
+root@aaa0c613d613:/usr/src/app# apt-get -y -qq install curl
+Selecting previously unselected package openssl.
+(Reading database ... 100% and files are processed.)
+Preparing to unpack .../00-openssl_3.5.5-1ubuntu2_amd64.deb ...
+Unpacking openssl (3.5.5-1ubuntu2) ...
+Setting up ca-certificates (20260816ubuntu0.26.04.1) ...
+Setting up curl (8.18.0-1ubuntu2.8) ...
+Processing triggers for libc-bin (2.43-2ubuntu2.4) ...
+
+root@aaa0c613d613:/usr/src/app# curl --version
+curl 8.18.0 (x86_64-pc-linux-gnu) libcurl/8.18.0 OpenSSL/3.5.5 zlib/1.3.1
+
+The rest of the install is done with the commands that the exercise gives.
+
+
+4. Adding the Node.js repository
+---------------------------------
+
+root@aaa0c613d613:/usr/src/app# curl -sL https://deb.nodesource.com/setup_24.x | bash
+2026-10-21 10:13:55 - Repository configured successfully.
+2026-10-21 10:13:55 - To install Node.js, run: apt install nodejs -y
+2026-10-21 10:13:55 - You can use N|solid Runtime as a node.js alternative
+2026-10-21 10:13:55 - To install N|solid Runtime, run: apt install nsolid -y
+
+The script is piped into `bash`, so it is executed without ever being written
+to the disk. What it does is add the NodeSource repository to the apt sources
+and import the NodeSource signing key, which is why the packages that are
+installed afterwards come from `deb.nodesource.com` and not from the regular
+Ubuntu archive.
+
+
+5. Installing Node.js
+----------------------
+
+root@aaa0c613d613:/usr/src/app# apt install -y nodejs
+Reading package lists... Done
+Building dependency tree... Done
+The following NEW packages will be installed:
+  nodejs
+Get:4 https://deb.nodesource.com/node_24.x nodistro/main amd64 Packages [9470 B]
+Fetched 46.6 MB in 18s (2586 kB/s)
+Setting up nodejs (24.22.0-1nodesource1) ...
+Processing triggers for libc-bin (2.43-2ubuntu2.4) ...
+Processing triggers for man-db (2.12.0-2build1) ...
+
+root@aaa0c613d613:/usr/src/app# node --version
+v24.22.0
+
+`node --version` prints the version of the installed Node.js. The version
+number depends on the day the install is run, because the NodeSource
+repository always serves the newest patch release of the 24.x line.
+
+
+6. Running the index file with Node.js
+---------------------------------------
+
+root@aaa0c613d613:/usr/src/app# node /usr/src/app/index.js
+Hello from /usr/src/app/index.js
+Hello World
+
+Node.js runs the file and both lines of code are printed. The `console.log`
+calls are the way JavaScript writes to the standard output, which is why the
+text ends up in the terminal.
+
+
+7. Leaving the container
+-------------------------
+
+8. Starting the stopped container again
+----------------------------------------
+
+Leaving the shell with `exit` stops the container, but it does not delete it.
+The container can be started again, and Node.js and the file are still there:
+
+$ docker container start -ai fsopen-exercise4
+root@aaa0c613d613:/# node --version
+v24.22.0
+root@aaa0c613d613:/# node /usr/src/app/index.js
+Hello from /usr/src/app/index.js
+Hello World
+root@aaa0c613d613:/# exit
+exit
+
+
+9. Verifying the state of the container
+----------------------------------------
+
+$ docker container ls -a --filter name=fsopen-exercise4 --format '{{.Names}} | {{.Image}} | {{.Status}} | {{.Command}}'
+fsopen-exercise4 | ubuntu | Exited (0) | "bash"
+
+$ docker container inspect --format '{{.State.ExitCode}}' fsopen-exercise4
+0
+
+$ docker diff fsopen-exercise4
+A /etc/apt/preferences.d/nodejs
+A /etc/apt/sources.list.d/nodesource.sources
+A /usr/bin/node
+A /usr/bin/nodejs
+A /usr/src/app
+A /usr/src/app/index.js
+
+The `docker diff` output shows that Node.js and the file were added to the
+writable layer of the container. The `ubuntu` image itself was not modified in
+any way, it still does not contain Node.js.
+
+
+10. What the exercise demonstrates
+-----------------------------------
+
+* The Ubuntu image is a minimal image, so both `curl` and Node.js have to be
+  installed from inside the container. Everything that is installed with apt
+  inside a running container ends up in the writable layer of that container.
+* The NodeSource script is a shell script that is piped into `bash`. It adds
+  the Node.js repository to the apt sources, and after that `apt install -y
+  nodejs` installs Node.js from that repository.
+* `node /usr/src/app/index.js` runs a JavaScript file with Node.js, and
+  `console.log` writes the text to the standard output.
+* `exit` stops the container but keeps it, so `docker container start -ai`
+  can attach to it again and Node.js and the file are still there. Only
+  `docker container rm` would throw the changes away.
+
+
+root@aaa0c613d613:/usr/src/app# exit
+exit

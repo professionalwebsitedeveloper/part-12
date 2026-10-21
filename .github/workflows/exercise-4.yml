@@ -1,0 +1,353 @@
+name: "Exercise: 4"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-4:
+    name: Exercise 4 - Installing Node.js inside a container
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      CONTAINER_NAME: fsopen-exercise4
+      ARTIFACT_DIR: ci-artifacts
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Show the Docker installation
+        run: |
+          docker version
+          echo "Server version: $(docker info --format '{{.ServerVersion}}')"
+
+      - name: Install the tools that drive the interactive session
+        run: |
+          set -euo pipefail
+
+          # 'script' allocates the pseudo terminal that 'docker run -it' needs.
+          if ! command -v script > /dev/null; then
+            echo "Installing bsdutils, which provides the 'script' utility"
+            sudo apt-get update
+            sudo apt-get install -y bsdutils
+          fi
+          # Not every implementation of 'script' understands '--version', so the
+          # output is not checked and only the presence of the tool matters.
+          script --version || echo "script is available: $(command -v script)"
+
+          # 'expect' types the keystrokes into the pseudo terminal. It is not
+          # part of the runner image, so it is installed here.
+          if ! command -v expect > /dev/null; then
+            echo "Installing expect, which types the keystrokes into the session"
+            sudo apt-get update
+            sudo apt-get install -y expect
+          fi
+          expect -v || echo "expect is available: $(command -v expect)"
+
+      - name: Run the interactive Ubuntu session and install Node.js
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$ARTIFACT_DIR"
+
+          # The session is driven by 'expect', which sends the same keystrokes
+          # that a developer would type. The script is written to a file first,
+          # because 'expect' has to read it from a real file.
+          cat > "$ARTIFACT_DIR/expect-session.exp" <<'EXPECT_EOF'
+          set timeout 1800
+          set name $env(CONTAINER_NAME)
+
+          # Ubuntu root prompt, e.g. "root@fd45b1f85f19:/usr/src/app# ".
+          # It is terminated by a carriage return, so no end-of-line anchor is used.
+          set PROMPT {root@[0-9a-f]+:\S*# }
+
+          # 'script' allocates the pseudo terminal that 'docker run -it' requires.
+          spawn script -q -e -c "stty cols 200 rows 50; docker container run --name $name -it ubuntu bash" $env(ARTIFACT_DIR)/session.raw
+
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: no container prompt"; exit 1 }
+          }
+          after 1000
+
+          # The packages ask questions on a terminal. The non interactive front end
+          # answers them with the default values, so the install cannot get stuck.
+          send -- "export DEBIAN_FRONTEND=noninteractive\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: export failed"; exit 1 }
+          }
+          after 800
+
+          send -- "mkdir -p /usr/src/app && cd /usr/src/app\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: cd failed"; exit 1 }
+          }
+          after 800
+
+          send -- "echo \"console.log('Hello from /usr/src/app/index.js');\" > /usr/src/app/index.js\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: seed file failed"; exit 1 }
+          }
+          after 800
+
+          # The index file of the previous exercise has a second line as well.
+          send -- "echo \"console.log('Hello World')\" >> /usr/src/app/index.js\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: seed file failed"; exit 1 }
+          }
+          after 800
+
+          send -- "cat /usr/src/app/index.js\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: cat failed"; exit 1 }
+          }
+          after 800
+
+          send -- "ls -la /usr/src/app\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: ls failed"; exit 1 }
+          }
+          after 800
+
+          # Curl is needed to download the NodeSource installation script.
+          send -- "apt-get update -qq\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: apt-get update failed"; exit 1 }
+          }
+          after 2000
+
+          send -- "apt-get -y -qq install curl\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: apt-get install curl failed"; exit 1 }
+          }
+          after 2000
+
+          send -- "curl --version\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: curl --version failed"; exit 1 }
+          }
+          after 800
+
+          # The NodeSource script adds the Node.js repository to the package sources.
+          send -- "curl -sL https://deb.nodesource.com/setup_24.x | bash\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: the NodeSource setup failed"; exit 1 }
+          }
+          after 3000
+
+          # Node.js itself is installed with apt, exactly as the exercise describes.
+          send -- "apt install -y nodejs\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: apt install nodejs failed"; exit 1 }
+          }
+          after 3000
+
+          send -- "node --version\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: node --version failed"; exit 1 }
+          }
+          after 800
+
+          # The index file of the previous exercise is run with Node.js.
+          send -- "node /usr/src/app/index.js\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: node did not run the index file"; exit 1 }
+          }
+          after 1000
+
+          # Leaving the shell stops the container.
+          send -- "exit\r"
+          expect {
+              -re {\$ } { }
+              eof { }
+              timeout { puts "TIMEOUT: container did not exit"; exit 1 }
+          }
+          after 2500
+          catch { close }
+
+          # ------------------------------------------------------------------
+          # Phase 2: start the stopped container again and run the file again
+          # ------------------------------------------------------------------
+          spawn script -q -e -c "stty cols 200 rows 50; docker container start -ai $name" $env(ARTIFACT_DIR)/restart.raw
+
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: no prompt after the restart"; exit 1 }
+          }
+          after 1500
+
+          send -- "node --version\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: node --version after the restart failed"; exit 1 }
+          }
+          after 800
+
+          send -- "node /usr/src/app/index.js\r"
+          expect {
+              -re $PROMPT { }
+              timeout { puts "TIMEOUT: node did not run the index file after the restart"; exit 1 }
+          }
+          after 1000
+
+          send -- "exit\r"
+          expect {
+              -re {\$ } { }
+              eof { }
+              timeout { puts "TIMEOUT: container did not exit"; exit 1 }
+          }
+          after 2000
+          catch { close }
+
+          puts "SESSION_DONE"
+          EXPECT_EOF
+
+          docker container rm -f "$CONTAINER_NAME" > /dev/null 2>&1 || true
+
+          expect "$ARTIFACT_DIR/expect-session.exp"
+
+      - name: Strip the terminal control codes from the transcripts
+        run: |
+          set -euo pipefail
+          # Remove the ANSI escape sequences and the CR characters that the
+          # pseudo terminal adds, so the transcript is readable.
+          # The character ranges are written in hex on purpose: in a sed bracket
+          # expression "[ -\/]" would be read as the range from space to
+          # backslash and would swallow the first character of the next word.
+          strip() {
+            sed -e 's/\x1b\[[0-9;?]*[\x20-\x2f]*[\x40-\x7e]//g' \
+                -e 's/\x1b\][^\x07]*\x07//g' \
+                -e 's/\x1b\\//g' \
+                -e 's/\x07//g' \
+                -e 's/\r//g' \
+                "$1"
+          }
+
+          strip "$ARTIFACT_DIR/session.raw"  > "$ARTIFACT_DIR/session-stripped.txt"
+          strip "$ARTIFACT_DIR/restart.raw" > "$ARTIFACT_DIR/restart-stripped.txt"
+
+          # The pseudo terminal echoes the fed input once before the shell takes
+          # over the terminal. Only the part from the first prompt onwards is the
+          # real session, so the leading echo is dropped.
+          {
+            head -n 1 "$ARTIFACT_DIR/session-stripped.txt"
+            awk 'found || /root@[0-9a-f]+:/ { found = 1; print }' "$ARTIFACT_DIR/session-stripped.txt"
+          } > "$ARTIFACT_DIR/ubuntu-session.txt"
+
+          {
+            head -n 1 "$ARTIFACT_DIR/restart-stripped.txt"
+            awk 'found || /root@[0-9a-f]+:/ { found = 1; print }' "$ARTIFACT_DIR/restart-stripped.txt"
+          } > "$ARTIFACT_DIR/ubuntu-restart.txt"
+
+          cat "$ARTIFACT_DIR/ubuntu-session.txt"
+          echo
+          echo "=== after the container was started again ==="
+          cat "$ARTIFACT_DIR/ubuntu-restart.txt"
+
+      - name: Verify the interactive session
+        run: |
+          set -euo pipefail
+          SESSION="$ARTIFACT_DIR/ubuntu-session.txt"
+          RESTART="$ARTIFACT_DIR/ubuntu-restart.txt"
+
+          # The prompt shows the shell is running inside the container.
+          grep -qE 'root@[0-9a-f]+:[^ ]*#' "$SESSION"
+
+          # Curl has to be installed inside the container, because the NodeSource
+          # installation script is downloaded with it.
+          grep -qF 'apt-get -y -qq install curl' "$SESSION"
+          grep -qE '^curl [0-9]+\.[0-9]+' "$SESSION"
+
+          # The NodeSource script has to add the Node.js repository.
+          grep -qF 'curl -sL https://deb.nodesource.com/setup_24.x | bash' "$SESSION"
+          grep -qF 'Repository configured successfully' "$SESSION"
+
+          # Node.js itself has to be installed with apt.
+          grep -qF 'apt install -y nodejs' "$SESSION"
+          grep -qF 'Setting up nodejs' "$SESSION"
+
+          # The installed Node.js has to report its version.
+          grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' "$SESSION"
+
+          # The index file has to be run with Node.js and it has to print
+          # 'Hello World'.
+          grep -qF 'node /usr/src/app/index.js' "$SESSION"
+          grep -qx 'Hello World' "$SESSION"
+
+          # The file has to exist inside the container.
+          grep -qE '^-rw-r--r-- +1 root root +[0-9]+ .*index\.js$' "$SESSION"
+
+          # Node.js and the file have to still be there after the restart.
+          grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' "$RESTART"
+          grep -qx 'Hello World' "$RESTART"
+
+          echo "::notice::The interactive session produced the expected output"
+
+      - name: Verify the container filesystem after exit
+        run: |
+          set -euo pipefail
+
+          docker container ls -a --filter "name=$CONTAINER_NAME" \
+            --format '{{.Names}} | {{.Image}} | {{.Status}} | {{.Command}}'
+
+          EXIT_CODE="$(docker container inspect --format '{{.State.ExitCode}}' "$CONTAINER_NAME")"
+          echo "Container exit code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::The container did not exit cleanly (exit code $EXIT_CODE)"
+            exit 1
+          fi
+
+          # The changes survive 'exit', because the container is only stopped.
+          docker cp "$CONTAINER_NAME:/usr/src/app/index.js" "$ARTIFACT_DIR/index.js"
+          echo "--- /usr/src/app/index.js ---"
+          cat "$ARTIFACT_DIR/index.js"
+          grep -qx "console.log('Hello from /usr/src/app/index.js');" "$ARTIFACT_DIR/index.js"
+          grep -qx "console.log('Hello World')" "$ARTIFACT_DIR/index.js"
+
+          # Node.js and the file were added to the writable layer of the container.
+          docker diff "$CONTAINER_NAME" | grep -E '^A /usr/src/app(/index\.js)?$'
+          docker diff "$CONTAINER_NAME" | grep -E '^A /usr/bin/node$'
+
+      - name: Verify the answer for the exercise
+        run: |
+          set -euo pipefail
+          ANSWER="answers/exercise4.txt"
+
+          if [ ! -s "$ANSWER" ]; then
+            echo "::error::$ANSWER is missing or empty"
+            exit 1
+          fi
+
+          grep -qF 'docker container run --name fsopen-exercise4 -it ubuntu bash' "$ANSWER"
+          grep -qF 'https://deb.nodesource.com/setup_24.x' "$ANSWER"
+          grep -qF 'apt install -y nodejs' "$ANSWER"
+          grep -qF 'node /usr/src/app/index.js' "$ANSWER"
+          grep -qF 'Hello World' "$ANSWER"
+          grep -qF 'Exited (0)' "$ANSWER"
+
+          echo "::notice::$ANSWER documents the session"
+
+      - name: Upload the session transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exercise-4-ubuntu-session
+          path: ci-artifacts/
+          retention-days: 7
