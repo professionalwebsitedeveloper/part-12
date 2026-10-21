@@ -1,0 +1,150 @@
+name: "Exercise: 2"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-2:
+    name: Exercise 2 - Running your second container
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      CONTAINER_NAME: fsopen-exercise2
+      ARTIFACT_DIR: ci-artifacts
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Show the Docker installation
+        run: |
+          docker version
+          echo "Server version: $(docker info --format '{{.ServerVersion}}')"
+
+      - name: Run the hello-world container
+        run: |
+          docker container run --rm hello-world
+
+      - name: Start an interactive Ubuntu container with bash
+        run: |
+          set -euo pipefail
+
+          if ! command -v script > /dev/null; then
+            echo "Installing bsdutils, which provides the 'script' utility"
+            sudo apt-get update
+            sudo apt-get install -y bsdutils
+          fi
+          script --version
+
+          mkdir -p "$ARTIFACT_DIR"
+
+          cat > "$ARTIFACT_DIR/commands.txt" <<'EOF'
+          mkdir /usr/src/app
+          ls /usr/src
+          cd /usr/src/app
+          echo "console.log('Hello from /usr/src/app/index.js');" > /usr/src/app/index.js
+          cat /usr/src/app/index.js
+          ls -la /usr/src/app
+          exit
+          EOF
+
+          docker container rm -f "$CONTAINER_NAME" > /dev/null 2>&1 || true
+
+          # 'script' allocates a real pseudo terminal, so 'docker run -it' behaves
+          # exactly like it does on a developer machine. Without it the 'it' flag
+          # fails with "the input device is not a TTY".
+          # The terminal is widened first, otherwise a long command line would
+          # be wrapped in the middle of the transcript.
+          script -q -e -E never -c \
+            "stty cols 200 rows 50; docker container run --name $CONTAINER_NAME -it ubuntu bash" \
+            "$ARTIFACT_DIR/ubuntu-session.raw" < "$ARTIFACT_DIR/commands.txt"
+
+      - name: Strip the terminal control codes from the transcript
+        run: |
+          set -euo pipefail
+          # Remove the ANSI escape sequences and the CR characters that the
+          # pseudo terminal adds, so the transcript is readable.
+          # The character ranges are written in hex on purpose: in a sed bracket
+          # expression "[ -\/]" would be read as the range from space to
+          # backslash and would swallow the first character of the next word.
+          sed -e 's/\x1b\[[0-9;?]*[\x20-\x2f]*[\x40-\x7e]//g' \
+              -e 's/\x1b\][^\x07]*\x07//g' \
+              -e 's/\x1b\\//g' \
+              -e 's/\x07//g' \
+              -e 's/\r//g' \
+            "$ARTIFACT_DIR/ubuntu-session.raw" > "$ARTIFACT_DIR/stripped.txt"
+
+          # The pseudo terminal echoes the fed input once before the shell takes
+          # over the terminal. Only the part from the first prompt onwards is the
+          # real session, so the leading echo is dropped.
+          {
+            head -n 1 "$ARTIFACT_DIR/stripped.txt"
+            awk 'found || /root@[0-9a-f]+:/ { found = 1; print }' "$ARTIFACT_DIR/stripped.txt"
+          } > "$ARTIFACT_DIR/ubuntu-session.txt"
+
+          cat "$ARTIFACT_DIR/ubuntu-session.txt"
+
+      - name: Verify the interactive session
+        run: |
+          set -euo pipefail
+          SESSION="$ARTIFACT_DIR/ubuntu-session.txt"
+
+          # The prompt shows the shell is running inside the container.
+          grep -qE 'root@[0-9a-f]+:[^ ]*#' "$SESSION"
+
+          # 'ls /usr/src' must have printed the directory that was created.
+          grep -qx 'app' "$SESSION"
+
+          # The file must exist and contain the expected contents.
+          grep -qE '^-rw-r--r-- +1 root root +[0-9]+ .*index\.js$' "$SESSION"
+          grep -qx "console.log('Hello from /usr/src/app/index.js');" "$SESSION"
+
+          echo "::notice::The interactive session produced the expected output"
+
+      - name: Verify the container filesystem after exit
+        run: |
+          set -euo pipefail
+
+          docker container ls -a --filter "name=$CONTAINER_NAME" \
+            --format '{{.Names}} | {{.Image}} | {{.Status}} | {{.Command}}'
+
+          EXIT_CODE="$(docker container inspect --format '{{.State.ExitCode}}' "$CONTAINER_NAME")"
+          echo "Container exit code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::The container did not exit cleanly (exit code $EXIT_CODE)"
+            exit 1
+          fi
+
+          # The changes survive 'exit', because the container is only stopped.
+          docker cp "$CONTAINER_NAME:/usr/src/app/index.js" "$ARTIFACT_DIR/index.js"
+          echo "--- /usr/src/app/index.js ---"
+          cat "$ARTIFACT_DIR/index.js"
+          grep -qx "console.log('Hello from /usr/src/app/index.js');" "$ARTIFACT_DIR/index.js"
+
+      - name: Verify the answer for the exercise
+        run: |
+          set -euo pipefail
+          ANSWER="answers/exercise2.txt"
+
+          if [ ! -s "$ANSWER" ]; then
+            echo "::error::$ANSWER is missing or empty"
+            exit 1
+          fi
+
+          grep -qF 'docker container run -it ubuntu bash' "$ANSWER"
+          grep -qF '/usr/src/app/index.js' "$ANSWER"
+          grep -qF 'Exited (0)' "$ANSWER"
+
+          echo "::notice::$ANSWER documents the session"
+
+      - name: Upload the session transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exercise-2-ubuntu-session
+          path: ci-artifacts/
+          retention-days: 7
