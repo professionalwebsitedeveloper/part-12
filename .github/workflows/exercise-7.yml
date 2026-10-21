@@ -1,0 +1,111 @@
+name: "Exercise: 7"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-7:
+    name: Exercise 7 - Little bit of MongoDB coding
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify routes are implemented
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          if grep -q "Implement this" routes/todos.js; then
+            echo "::error::GET /todos/:id and PUT /todos/:id are not implemented yet"
+            exit 1
+          fi
+          echo "Routes implemented"
+
+      - name: Start MongoDB with Docker Compose
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml up -d
+          echo "Waiting for MongoDB to be ready..."
+          for i in $(seq 1 60); do
+            if docker compose -f docker-compose.dev.yml exec -T mongo mongosh --quiet --eval 'db.adminCommand({ ping: 1 })' >/dev/null 2>&1; then
+              echo "MongoDB is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Install backend dependencies
+        working-directory: ./todo-app/todo-backend
+        run: npm install
+
+      - name: Start the backend
+        working-directory: ./todo-app/todo-backend
+        env:
+          MONGO_URL: mongodb://the_username:the_password@localhost:3456/the_database
+        run: |
+          set -euo pipefail
+          nohup node ./bin/www > backend.log 2>&1 &
+          echo $! > backend.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/ > /dev/null 2>&1; then
+              echo "Backend is ready"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/ > /dev/null
+
+      - name: Verify GET /todos returns seeded todos
+        run: |
+          set -euo pipefail
+          RES=$(curl -fsS http://localhost:3000/todos)
+          echo "GET /todos => $RES"
+          echo "$RES" | grep -q "Write code"
+          echo "$RES" | grep -q "Learn about containers"
+
+      - name: Verify GET /todos/:id and PUT /todos/:id
+        run: |
+          set -euo pipefail
+          # Get the id of the first seeded todo
+          ID=$(curl -fsS http://localhost:3000/todos | python3 -c 'import sys,json; print(json.load(sys.stdin)[0]["_id"])')
+          echo "Testing with id: $ID"
+
+          # GET one
+          ONE=$(curl -fsS http://localhost:3000/todos/$ID)
+          echo "GET one => $ONE"
+          echo "$ONE" | grep -q "Write code"
+
+          # PUT update
+          UPD=$(curl -fsS -X PUT -H 'Content-Type: application/json' -d '{"text":"Updated todo text","done":false}' http://localhost:3000/todos/$ID)
+          echo "PUT => $UPD"
+          echo "$UPD" | grep -q "Updated todo text"
+
+          # Verify persisted
+          AFTER=$(curl -fsS http://localhost:3000/todos/$ID)
+          echo "GET after => $AFTER"
+          echo "$AFTER" | grep -q "Updated todo text"
+
+      - name: Stop the backend
+        if: always()
+        working-directory: ./todo-app/todo-backend
+        run: |
+          if [ -f backend.pid ]; then
+            kill $(cat backend.pid) 2>/dev/null || true
+          fi
+          rm -f backend.pid backend.log
+
+      - name: Stop MongoDB
+        if: always()
+        working-directory: ./todo-app/todo-backend
+        run: docker compose -f docker-compose.dev.yml down -v || true
