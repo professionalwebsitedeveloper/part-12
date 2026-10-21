@@ -1,0 +1,68 @@
+name: "Exercise: 6"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-6:
+    name: Exercise 6 - Docker compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Show the Docker installation
+        run: |
+          docker version
+          echo "Server version: $(docker info --format '{{.ServerVersion}}')"
+          docker compose version
+
+      - name: Verify the docker-compose.yml exists
+        run: |
+          set -euo pipefail
+          test -s todo-app/todo-backend/docker-compose.yml
+          echo "docker-compose.yml found"
+
+      - name: Start the application with Docker Compose
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          docker compose up -d --build
+          # Wait for the server to become ready.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/ > /dev/null 2>&1; then
+              echo "Server is ready"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/ > /dev/null
+
+      - name: Verify the visit counter increases
+        run: |
+          set -euo pipefail
+          FIRST=$(curl -fsS http://localhost:3000/)
+          echo "First response: $FIRST"
+          FIRST_N=$(echo "$FIRST" | grep -oE '[0-9]+')
+
+          SECOND=$(curl -fsS http://localhost:3000/)
+          echo "Second response: $SECOND"
+          SECOND_N=$(echo "$SECOND" | grep -oE '[0-9]+')
+
+          if [ "$SECOND_N" -eq $((FIRST_N + 1)) ]; then
+            echo "::notice::The visit counter increased from $FIRST_N to $SECOND_N"
+          else
+            echo "::error::Visit counter did not increase by 1 (was $FIRST_N, now $SECOND_N)"
+            exit 1
+          fi
+
+      - name: Stop the application
+        if: always()
+        working-directory: ./todo-app/todo-backend
+        run: |
+          docker compose down -v > /dev/null 2>&1 || true
