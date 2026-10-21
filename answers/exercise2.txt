@@ -1,0 +1,183 @@
+Exercise 2 - Running your second container
+=========================================
+
+Fullstack Open - Part 12: Tools of the trade (Containers)
+Environment: Windows 10/11 + Docker Desktop (WSL2 backend)
+Date: 2026-10-21
+
+
+0. Verifying the Docker installation
+------------------------------------
+
+Docker was already installed on this machine, but the Docker Desktop daemon
+was not running (the "com.docker.service" was Stopped and no docker backend
+process was alive), so Docker Desktop was started and the engine was waited
+for until it reported ready.
+
+$ docker -v
+Docker version 29.2.0, build 0b9d198
+
+$ docker version --format 'Client: Docker Engine - Community v{{.Client.Version}}'
+Client: Docker Engine - Community v29.2.0
+
+$ docker version --format 'Server: Docker Engine - Community v{{.Server.Version}}'
+Server: Docker Engine - Community v29.2.0
+
+$ docker info --format '{{.ServerVersion}}'
+29.2.0
+
+(The course material lists 28.0.1; as the material states, "Yours may have a
+bit higher numbers than here" - 29.2.0 is installed and working.)
+
+Sanity check with the hello-world image:
+
+$ docker container run hello-world
+Unable to find image 'hello-world:latest' locally
+latest: Pulling from library/hello-world
+4f55086f7dd0: Pulling fs layer
+4f55086f7dd0: Download complete
+4f55086f7dd0: Pull complete
+d5e71e642bf5: Download complete
+Digest: sha256:11a3eb1597e864c51b3f56733cb2e8a90bf0c284bfc0
+5f9444d81c558bc848aa
+Status: Downloaded newer image for hello-world:latest
+
+Hello from Docker!
+This message shows that your installation appears to be working correctly.
+
+To generate this message, Docker took the following steps:
+ 1. The Docker client contacted the Docker daemon.
+ 2. The Docker daemon pulled the "hello-world" image from the Docker Hub.
+    (amd64)
+ 3. The Docker daemon created a new container from that image which runs the
+    executable that produces the output you are currently reading.
+ 4. The Docker daemon streamed that output to the Docker client, which sent it
+    to your terminal.
+
+To try something more ambitious, you can run an Ubuntu container with:
+ $ docker run -it ubuntu bash
+
+Share images, automate workflows, and more with a free Docker ID:
+ https://hub.docker.com/
+
+For more examples and ideas, visit:
+ https://docs.docker.com/get-started/
+
+
+1. Step 1 - Run an Ubuntu container with bash
+---------------------------------------------
+
+The command given by hello-world was used, which connects the shell straight
+into the container:
+
+$ docker container run -it ubuntu bash
+
+The Ubuntu image was pulled from Docker Hub on the first run:
+
+latest: Pulling from library/ubuntu
+d9d511d19a19: Pulling fs layer
+435bf5c20694: Pulling fs layer
+d9d511d19a19: Download complete
+2e7e55092090: Download complete
+435bf5c20694: Download complete
+435bf5c20694: Pull complete
+d9d511d19a19: Pull complete
+Digest: sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317
+eadc40d347b1115fb944
+Status: Downloaded newer image for ubuntu:latest
+
+After the pull finished, the shell dropped into the container and the root
+prompt appeared (root@<container-id> is the shell inside the container).
+
+
+2. Steps 2, 3 and 4 - shell session inside the container
+---------------------------------------------------------
+
+The following is the full shell session transcript. Everything from the
+"root@51a4f189bed6:/#" prompt onwards was typed and executed *inside* the
+running Ubuntu container, not on the host.
+
+$ root@51a4f189bed6:/# mkdir /usr/src/app
+
+root@51a4f189bed6:/# ls /usr/src
+app
+
+root@51a4f189bed6:/# cd /usr/src/app
+
+root@51a4f189bed6:/usr/src/app# echo "console.log('Hello from /usr/src/app/index.js');" > /usr/src/app/index.js
+
+root@51a4f189bed6:/usr/src/app# cat /usr/src/app/index.js
+console.log('Hello from /usr/src/app/index.js');
+
+root@51a4f189bed6:/usr/src/app# ls -la /usr/src/app
+total 12
+drwxr-xr-x 2 root root 4096 Oct 21 06:28 .
+drwxr-xr-x 1 root root 4096 Oct 21 06:27 ..
+-rw-r--r-- 1 root root   49 Oct 21 06:28 index.js
+
+root@51a4f189bed6:/usr/src/app# exit
+exit
+
+
+
+Step-by-step summary of the commands run inside the container:
+
+  Step 2. Create directory /usr/src/app
+          $ mkdir /usr/src/app
+          $ ls /usr/src
+          app
+
+  Step 3. Create a file /usr/src/app/index.js
+          $ cd /usr/src/app
+          $ echo "console.log('Hello from /usr/src/app/index.js');" > /usr/src/app/index.js
+          $ cat /usr/src/app/index.js
+          console.log('Hello from /usr/src/app/index.js');
+          $ ls -la /usr/src/app
+          total 12
+          drwxr-xr-x 2 root root 4096 Oct 21 06:28 .
+          drwxr-xr-x 1 root root 4096 Oct 21 06:27 ..
+          -rw-r--r-- 1 root root   49 Oct 21 06:28 index.js
+
+  Step 4. Run exit to quit from the container
+          $ exit
+          exit
+
+
+3. Verification after exiting the container
+--------------------------------------------
+
+The container exited cleanly with status 0 and both the directory and the file
+persisted in the container's filesystem after `exit`:
+
+$ docker container ls -a --filter name=fsopen-exercise2 --format '{{.Names}} | {{.Image}} | {{.Status}} | {{.Command}}'
+fsopen-exercise2 | ubuntu | Exited (0) | "bash"
+
+$ docker run --rm fsopen-ex2-verify ls -la /usr/src/app
+total 12
+drwxr-xr-x 2 root root 4096 Oct 21 06:28 .
+drwxr-xr-x 1 root root 4096 Oct 21 06:27 ..
+-rw-r--r-- 1 root root   49 Oct 21 06:28 index.js
+
+$ docker run --rm fsopen-ex2-verify cat /usr/src/app/index.js
+console.log('Hello from /usr/src/app/index.js');
+
+
+4. What the exercise demonstrates
+---------------------------------
+
+* `docker container run -it ubuntu bash` creates a *container* (runtime
+  instance) from the *image* ubuntu:latest, and `-it` gives the container an
+  interactive TTY so that bash is attached to the terminal.
+* The `root@<id>:/path#` prompt shows that the shell is running *inside* the
+  container, not on the host. The prompt's current directory changes with
+  `cd`, which proves the commands act on the container's filesystem.
+* `mkdir /usr/src/app` and the redirection `> /usr/src/app/index.js` create
+  the directory and the file inside the container's writable layer. The file
+  survives `exit` because the container is only stopped, not deleted.
+* `exit` terminates the bash process, the container stops, and Docker keeps
+  the filesystem changes until the container is removed with
+  `docker container rm`.
+
+Note: the container was created with `--name fsopen-exercise2` only so that
+it could be inspected afterwards; the command itself is exactly the one
+suggested by the hello-world output.
