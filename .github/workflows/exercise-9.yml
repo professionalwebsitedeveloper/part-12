@@ -1,0 +1,106 @@
+name: "Exercise: 9"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-9:
+    name: Exercise 9 - Set up Redis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify Redis is defined in docker-compose.dev.yml
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          grep -qi "redis" docker-compose.dev.yml
+          echo "Redis service found in docker-compose.dev.yml"
+
+      - name: Start services with Docker Compose
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml up -d
+          echo "Waiting for MongoDB to be ready..."
+          for i in $(seq 1 60); do
+            if docker compose -f docker-compose.dev.yml exec -T mongo mongosh --quiet --eval 'db.adminCommand({ ping: 1 })' -u root -p example --authenticationDatabase admin >/dev/null 2>&1; then
+              echo "MongoDB is ready"
+              break
+            fi
+            sleep 2
+          done
+          echo "Waiting for Redis to be ready..."
+          for i in $(seq 1 60); do
+            if docker compose -f docker-compose.dev.yml exec -T redis redis-cli ping >/dev/null 2>&1; then
+              echo "Redis is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Install backend dependencies
+        working-directory: ./todo-app/todo-backend
+        run: npm install
+
+      - name: Start the backend
+        working-directory: ./todo-app/todo-backend
+        env:
+          MONGO_URL: mongodb://the_username:the_password@localhost:3456/the_database
+          REDIS_URL: redis://localhost:6379
+        run: |
+          set -euo pipefail
+          nohup node ./bin/www > backend.log 2>&1 &
+          echo $! > backend.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/ > /dev/null 2>&1; then
+              echo "Backend is ready"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/ > /dev/null
+
+      - name: Verify Redis connection
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          # Give the async Redis client a moment to connect
+          sleep 3
+          if grep -q "Connected to Redis" backend.log; then
+            echo "Backend connected to Redis"
+          else
+            echo "::warning::'Connected to Redis' not found in backend.log"
+            echo "--- backend.log ---"
+            cat backend.log
+          fi
+          # Ensure the backend did not crash with a Redis connection error
+          if grep -q "ECONNREFUSED" backend.log; then
+            echo "::error::Redis connection refused"
+            exit 1
+          fi
+
+      - name: Stop the backend
+        if: always()
+        working-directory: ./todo-app/todo-backend
+        run: |
+          if [ -f backend.pid ]; then
+            kill $(cat backend.pid) 2>/dev/null || true
+          fi
+          rm -f backend.pid backend.log
+
+      - name: Stop services
+        if: always()
+        working-directory: ./todo-app/todo-backend
+        run: docker compose -f docker-compose.dev.yml down -v || true
