@@ -1,0 +1,172 @@
+name: "Exercise: 12"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-12:
+    name: Exercise 12 - Persisting data in Redis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify Redis persistence configuration
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          grep -q "redis-server" docker-compose.dev.yml
+          grep -q "appendonly" docker-compose.dev.yml
+          grep -q "./redis_data:/data" docker-compose.dev.yml
+          grep -q "redis_data" ../../.gitignore
+          echo "Redis persistence configuration found"
+
+      - name: Clean previous Redis data
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml down -v || true
+          rm -rf redis_data
+
+      - name: Start services with Docker Compose
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml up -d
+          echo "Waiting for MongoDB to be ready..."
+          for i in $(seq 1 60); do
+            if docker compose -f docker-compose.dev.yml exec -T mongo mongosh --quiet --eval 'db.adminCommand({ ping: 1 })' -u root -p example --authenticationDatabase admin >/dev/null 2>&1; then
+              echo "MongoDB is ready"
+              break
+            fi
+            sleep 2
+          done
+          echo "Waiting for Redis to be ready..."
+          for i in $(seq 1 60); do
+            if docker compose -f docker-compose.dev.yml exec -T redis redis-cli ping >/dev/null 2>&1; then
+              echo "Redis is ready"
+      - name: Start the backend
+        working-directory: ./todo-app/todo-backend
+        env:
+          MONGO_URL: mongodb://the_username:the_password@localhost:3456/the_database
+          REDIS_URL: redis://localhost:6379
+        run: |
+          set -euo pipefail
+          nohup node ./bin/www > backend.log 2>&1 &
+          echo $! > backend.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/ > /dev/null 2>&1; then
+              echo "Backend is ready"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/ > /dev/null
+
+      - name: Create a todo and record the counter
+        run: |
+          set -euo pipefail
+          sleep 1
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d '{"text":"Persistence test todo","done":false}' \
+            http://localhost:3000/todos > /dev/null
+          sleep 1
+          BEFORE=$(curl -fsS http://localhost:3000/statistics)
+          echo "Counter before restart: $BEFORE"
+          echo "$BEFORE" | python3 -c 'import sys, json; d = json.load(sys.stdin); assert d["added_todos"] == 1, d'
+
+      - name: Stop the backend
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          if [ -f backend.pid ]; then
+            kill $(cat backend.pid) 2>/dev/null || true
+          fi
+
+      - name: Restart services without removing volumes
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml down
+          docker compose -f docker-compose.dev.yml up -d
+          echo "Waiting for MongoDB to be ready..."
+          for i in $(seq 1 60); do
+            if docker compose -f docker-compose.dev.yml exec -T mongo mongosh --quiet --eval 'db.adminCommand({ ping: 1 })' -u root -p example --authenticationDatabase admin >/dev/null 2>&1; then
+              echo "MongoDB is ready"
+              break
+            fi
+            sleep 2
+          done
+          echo "Waiting for Redis to be ready..."
+          for i in $(seq 1 60); do
+            if docker compose -f docker-compose.dev.yml exec -T redis redis-cli ping >/dev/null 2>&1; then
+              echo "Redis is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Start the backend again
+        working-directory: ./todo-app/todo-backend
+        env:
+          MONGO_URL: mongodb://the_username:the_password@localhost:3456/the_database
+          REDIS_URL: redis://localhost:6379
+        run: |
+          set -euo pipefail
+          nohup node ./bin/www > backend.log 2>&1 &
+          echo $! > backend.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/ > /dev/null 2>&1; then
+              echo "Backend is ready"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/ > /dev/null
+
+      - name: Verify Redis data persisted
+        run: |
+          set -euo pipefail
+          sleep 1
+          AFTER=$(curl -fsS http://localhost:3000/statistics)
+          echo "Counter after restart: $AFTER"
+          echo "$AFTER" | python3 -c 'import sys, json; d = json.load(sys.stdin); assert d["added_todos"] == 1, d'
+
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d '{"text":"Second persistence todo","done":false}' \
+            http://localhost:3000/todos > /dev/null
+          sleep 1
+          FINAL=$(curl -fsS http://localhost:3000/statistics)
+          echo "Counter after second todo: $FINAL"
+          echo "$FINAL" | python3 -c 'import sys, json; d = json.load(sys.stdin); assert d["added_todos"] == 2, d'
+
+          echo "Redis data persisted across restart"
+
+      - name: Cleanup
+        if: always()
+        working-directory: ./todo-app/todo-backend
+        run: |
+          if [ -f backend.pid ]; then
+            kill $(cat backend.pid) 2>/dev/null || true
+          fi
+          rm -f backend.pid backend.log
+          docker compose -f docker-compose.dev.yml down -v || true
+          rm -rf redis_data
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Install backend dependencies
+        working-directory: ./todo-app/todo-backend
+        run: npm install
