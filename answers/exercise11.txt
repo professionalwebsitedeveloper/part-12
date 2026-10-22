@@ -1,0 +1,110 @@
+Exercise 11 - Redis CLI
+=======================
+
+Fullstack Open - Part 12: Tools of the trade (Containers)
+Environment: Windows 11 + Docker Desktop (WSL2 backend)
+Date: 2026-10-22
+
+
+0. What the exercise asks for
+-----------------------------
+
+Use docker exec to open redis-cli in the Redis container. Inspect the key used
+by the application, change its value, verify the change through the Express app,
+create a new todo and confirm the counter increased, then delete the key and
+confirm the counter still works.
+
+
+1. Make sure the application has created a todo (counter = 1)
+-------------------------------------------------------------
+
+$ curl -s -X POST -H 'Content-Type: application/json' \
+    -d '{"text":"Initial todo for redis cli","done":false}' \
+    http://localhost:3000/todos
+{"_id":"...","text":"Initial todo for redis cli","done":false}
+
+$ curl -s http://localhost:3000/statistics
+{"added_todos":1}
+
+
+2. Open redis-cli inside the Redis container
+---------------------------------------------
+
+$ docker exec -it todo-backend-redis-1 redis-cli
+127.0.0.1:6379>
+
+
+3. Find the key with KEYS *
+---------------------------
+
+127.0.0.1:6379> KEYS *
+1) "added_todos"
+
+
+4. Check the value of the key with GET
+--------------------------------------
+
+127.0.0.1:6379> GET added_todos
+"1"
+
+
+5. Set the value of the counter to 9001
+---------------------------------------
+
+127.0.0.1:6379> SET added_todos 9001
+OK
+
+127.0.0.1:6379> GET added_todos
+"9001"
+
+
+6. Verify the new value through the Express app
+----------------------------------------------
+
+$ curl -s http://localhost:3000/statistics
+{"added_todos":9001}
+
+
+7. Create a new todo and verify the counter increased
+-----------------------------------------------------
+
+$ curl -s -X POST -H 'Content-Type: application/json' \
+    -d '{"text":"Todo created after redis-cli set","done":false}' \
+    http://localhost:3000/todos
+{"_id":"...","text":"Todo created after redis-cli set","done":false}
+
+$ curl -s http://localhost:3000/statistics
+{"added_todos":9002}
+
+127.0.0.1:6379> GET added_todos
+"9002"
+
+
+8. Delete the key from redis-cli
+--------------------------------
+
+127.0.0.1:6379> DEL added_todos
+(integer) 1
+
+127.0.0.1:6379> GET added_todos
+(nil)
+
+127.0.0.1:6379> exit
+
+
+9. Verify the counter works when new todos are added
+----------------------------------------------------
+
+$ curl -s -X POST -H 'Content-Type: application/json' \
+    -d '{"text":"Todo after deleting key","done":false}' \
+    http://localhost:3000/todos
+{"_id":"...","text":"Todo after deleting key","done":false}
+
+$ curl -s http://localhost:3000/statistics
+{"added_todos":1}
+
+$ docker exec todo-backend-redis-1 redis-cli GET added_todos
+1
+
+The counter recreated the key and started counting from 1 after the key was
+deleted, so the Redis-backed counter keeps working.

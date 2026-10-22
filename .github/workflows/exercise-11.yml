@@ -1,0 +1,30 @@
+name: "Exercise: 11"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-11:
+    name: Exercise 11 - Redis CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify answers/exercise11.txt exists
+        run: |
+          set -euo pipefail
+          test -s answers/exercise11.txt
+          grep -q "redis-cli" answers/exercise11.txt
+          grep -q "KEYS" answers/exercise11.txt
+          grep -q "GET added_todos" answers/exercise11.txt
+          grep -q "SET added_todos 9001" answers/exercise11.txt
+          grep -q "DEL added_todos" answers/exercise11.txt
+          grep -q "9001" answers/exercise11.txt
+          grep -q "9002" answers/exercise11.txt
+          echo "answers/exercise11.txt found and documents the Redis CLI session"
