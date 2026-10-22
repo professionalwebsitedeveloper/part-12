@@ -50,6 +50,10 @@ jobs:
           docker exec "$CID" mongosh -u root -p example --authenticationDatabase admin the_database --quiet --eval 'db.todos.find({})' | grep -q "Increase the number of tools in my tool belt"
           echo "Todo inserted and visible via Mongo CLI"
 
+      - name: Install backend dependencies
+        working-directory: ./todo-app/todo-backend
+        run: npm install
+
       - name: Verify the todo is visible in the Express app
         working-directory: ./todo-app/todo-backend
         run: |
