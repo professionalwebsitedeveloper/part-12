@@ -16,4 +16,21 @@ router.get('/', async (req, res) => {
   });
 });
 
+/* GET usage statistics. */
+router.get('/statistics', async (req, res) => {
+  let addedTodos = 0
+  try {
+    const value = await redis.get('added_todos')
+    if (value !== null && value !== undefined) {
+      addedTodos = Number(value)
+    }
+  } catch (error) {
+    console.log('Redis statistics error', error)
+  }
+
+  res.send({
+    added_todos: addedTodos
+  });
+});
+
 module.exports = router;

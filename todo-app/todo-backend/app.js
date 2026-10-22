@@ -15,4 +15,8 @@ app.use(express.json());
 app.use('/', indexRouter);
 app.use('/todos', todosRouter);
 
+// Keep the API available under the /api prefix as well.
+app.use('/api', indexRouter);
+app.use('/api/todos', todosRouter);
+
 module.exports = app;
