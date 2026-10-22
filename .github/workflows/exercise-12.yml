@@ -36,7 +36,9 @@ jobs:
         run: |
           set -euo pipefail
           docker compose -f docker-compose.dev.yml down -v || true
-          rm -rf redis_data
+          sudo rm -rf redis_data
+          mkdir -p redis_data
+          sudo chmod 777 redis_data
 
       - name: Start services with Docker Compose
         working-directory: ./todo-app/todo-backend
@@ -161,7 +163,7 @@ jobs:
           fi
           rm -f backend.pid backend.log
           docker compose -f docker-compose.dev.yml down -v || true
-          rm -rf redis_data
+          sudo rm -rf redis_data
               break
             fi
             sleep 2
