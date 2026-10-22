@@ -57,6 +57,15 @@ jobs:
           for i in $(seq 1 60); do
             if docker compose -f docker-compose.dev.yml exec -T redis redis-cli ping >/dev/null 2>&1; then
               echo "Redis is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Install backend dependencies
+        working-directory: ./todo-app/todo-backend
+        run: npm install
+
       - name: Start the backend
         working-directory: ./todo-app/todo-backend
         env:
@@ -164,11 +173,3 @@ jobs:
           rm -f backend.pid backend.log
           docker compose -f docker-compose.dev.yml down -v || true
           sudo rm -rf redis_data
-              break
-            fi
-            sleep 2
-          done
-
-      - name: Install backend dependencies
-        working-directory: ./todo-app/todo-backend
-        run: npm install
