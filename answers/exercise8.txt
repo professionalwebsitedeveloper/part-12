@@ -1,0 +1,143 @@
+Exercise 8 - Mongo CLI
+======================
+
+Fullstack Open - Part 12: Tools of the trade (Containers)
+Environment: Windows 11 + Docker Desktop (WSL2 backend)
+Date: 2026-10-21
+
+
+0. What the exercise asks for
+-----------------------------
+
+While the MongoDB from the previous exercise is running, access the database
+with the Mongo command-line interface (CLI) using docker exec. Then add a new
+todo using the CLI:
+
+  text: "Increase the number of tools in my tool belt"
+  done: false
+
+The new todo must be visible both in the Express app (GET /todos) and when
+querying from the Mongo CLI.
+
+
+1. Step 1: Run MongoDB
+-----------------------
+
+$ cd todo-app/todo-backend
+$ docker compose -f docker-compose.dev.yml down --volumes
+$ docker compose -f docker-compose.dev.yml up -d
+ Container todo-backend-mongo-1  Created
+ Container todo-backend-mongo-1  Started
+
+$ docker ps --format '{{.Names}}'
+todo-backend-mongo-1
+
+The mongo container is up and the init script (mongo/mongo-init.js) created
+the user the_username in the_database and seeded the two todos.
+
+
+2. Step 2: Use docker exec to get inside the container
+------------------------------------------------------
+
+$ docker exec -it todo-backend-mongo-1 bash
+root@<container-id>:/# 
+
+(For the commands below the exec is run in non-interactive mode with
+`docker exec ... mongosh ...` so the output can be captured, which is
+equivalent to opening a shell and running `mongosh` inside the container.)
+
+
+3. Step 3: Open the Mongo CLI and inspect the databases
+-------------------------------------------------------
+
+$ docker exec todo-backend-mongo-1 mongosh -u root -p example \
+    --authenticationDatabase admin --quiet --eval 'show dbs'
+admin         100.00 KiB
+config         12.00 KiB
+local          40.00 KiB
+the_database   40.00 KiB
+
+$ docker exec todo-backend-mongo-1 mongosh -u root -p example \
+    --authenticationDatabase admin the_database --quiet --eval 'show collections'
+todos
+
+> use the_database
+> show collections
+todos
+
+> db.todos.find({})
+[
+  {
+    _id: ObjectId('6ad998e35543c1bab8e53761'),
+    text: 'Write code',
+    done: true
+  },
+  {
+    _id: ObjectId('6ad998e35543c1bab8e53762'),
+    text: 'Learn about containers',
+    done: false
+  }
+]
+
+
+4. Insert a new todo via the Mongo CLI
+--------------------------------------
+
+Inside the container shell the equivalent of the following was run with
+mongosh:
+
+> db.todos.insertOne({ text: "Increase the number of tools in my tool belt", done: false })
+{
+  acknowledged: true,
+  insertedId: ObjectId('6ad999974b9f87a5768d49ba')
+}
+
+Verifying from the CLI:
+
+> db.todos.find({})
+[
+  {
+    _id: ObjectId('6ad998e35543c1bab8e53761'),
+    text: 'Write code',
+    done: true
+  },
+  {
+    _id: ObjectId('6ad998e35543c1bab8e53762'),
+    text: 'Learn about containers',
+    done: false
+  },
+  {
+    _id: ObjectId('6ad999974b9f87a5768d49ba'),
+    text: 'Increase the number of tools in my tool belt',
+    done: false
+  }
+]
+
+
+5. Verify the new todo shows up in the Express app
+--------------------------------------------------
+
+Start the backend (outside the container) with the correct MONGO_URL:
+
+$ MONGO_URL=mongodb://the_username:the_password@localhost:3456/the_database npm run dev
+
+$ curl -s http://localhost:3000/todos
+[
+  {"_id":"6ad998e35543c1bab8e53761","text":"Write code","done":true},
+  {"_id":"6ad998e35543c1bab8e53762","text":"Learn about containers","done":false},
+  {"_id":"6ad999974b9f87a5768d49ba","text":"Increase the number of tools in my tool belt","done":false}
+]
+
+The todo inserted through the Mongo CLI is present in the Express app as well,
+so the bind-mounted database and the host-side Node application share the same
+data store.
+
+
+6. Cleanup
+----------
+
+$ docker compose -f docker-compose.dev.yml down --volumes
+$ exit
+
+The new todo "Increase the number of tools in my tool belt" (done: false) is
+now stored in the_database.todos and is served by the Express backend.

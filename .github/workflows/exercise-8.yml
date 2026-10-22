@@ -1,0 +1,80 @@
+name: "Exercise: 8"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-8:
+    name: Exercise 8 - Mongo CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify answers/exercise8.txt exists
+        run: |
+          set -euo pipefail
+          test -s answers/exercise8.txt
+          grep -q "Increase the number of tools in my tool belt" answers/exercise8.txt
+          echo "answers/exercise8.txt found and contains the new todo"
+
+      - name: Start MongoDB with Docker Compose
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml up -d
+          echo "Waiting for MongoDB to be ready..."
+          for i in $(seq 1 60); do
+            if docker compose -f docker-compose.dev.yml exec -T mongo mongosh --quiet --eval 'db.adminCommand({ ping: 1 })' -u root -p example --authenticationDatabase admin >/dev/null 2>&1; then
+              echo "MongoDB is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Insert a todo via the Mongo CLI (docker exec)
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          CID=$(docker compose -f docker-compose.dev.yml ps -q mongo)
+          echo "Container id: $CID"
+          printf 'db.todos.insertOne({ text: "Increase the number of tools in my tool belt", done: false })\n' > /tmp/insert.js
+          docker cp /tmp/insert.js "$CID":/tmp/insert.js
+          docker exec "$CID" mongosh -u root -p example --authenticationDatabase admin the_database --quiet /tmp/insert.js
+          echo "--- verify via CLI ---"
+          docker exec "$CID" mongosh -u root -p example --authenticationDatabase admin the_database --quiet --eval 'db.todos.find({})' | grep -q "Increase the number of tools in my tool belt"
+          echo "Todo inserted and visible via Mongo CLI"
+
+      - name: Verify the todo is visible in the Express app
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          # Start backend with the mongo URL
+          MONGO_URL=mongodb://the_username:the_password@localhost:3456/the_database nohup node ./bin/www > backend.log 2>&1 &
+          echo $! > backend.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/todos >/dev/null 2>&1; then
+              echo "Backend ready"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/todos | grep -q "Increase the number of tools in my tool belt"
+          echo "Todo visible in Express app"
+
+      - name: Stop the backend
+        if: always()
+        working-directory: ./todo-app/todo-backend
+        run: |
+          if [ -f backend.pid ]; then kill $(cat backend.pid) 2>/dev/null || true; fi
+          rm -f backend.pid backend.log
+
+      - name: Stop MongoDB
+        if: always()
+        working-directory: ./todo-app/todo-backend
+        run: docker compose -f docker-compose.dev.yml down -v || true
