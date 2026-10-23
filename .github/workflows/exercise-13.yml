@@ -1,0 +1,133 @@
+name: "Exercise: 13"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-13:
+    name: Exercise 13 - Containerizing the todo frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      IMAGE_NAME: todo-frontend
+      CONTAINER_NAME: fsopen-exercise13
+      ARTIFACT_DIR: ci-artifacts
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify the Dockerfile exists
+        run: |
+          set -euo pipefail
+          test -s todo-app/todo-frontend/Dockerfile
+          grep -q "ENV VITE_BACKEND_URL" todo-app/todo-frontend/Dockerfile
+          echo "Frontend Dockerfile found and uses ENV VITE_BACKEND_URL"
+
+      - name: Start backend services with Docker Compose
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml up -d
+          echo "Waiting for MongoDB to be ready..."
+          for i in $(seq 1 60); do
+            if docker compose -f docker-compose.dev.yml exec -T mongo mongosh --quiet --eval 'db.adminCommand({ ping: 1 })' -u root -p example --authenticationDatabase admin >/dev/null 2>&1; then
+              echo "MongoDB is ready"
+              break
+            fi
+            sleep 2
+          done
+          echo "Waiting for Redis to be ready..."
+          for i in $(seq 1 60); do
+            if docker compose -f docker-compose.dev.yml exec -T redis redis-cli ping >/dev/null 2>&1; then
+              echo "Redis is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Install backend dependencies
+        working-directory: ./todo-app/todo-backend
+        run: npm install
+
+      - name: Start the backend
+        working-directory: ./todo-app/todo-backend
+        env:
+          MONGO_URL: mongodb://the_username:the_password@localhost:3456/the_database
+          REDIS_URL: redis://localhost:6379
+        run: |
+          set -euo pipefail
+          nohup node ./bin/www > backend.log 2>&1 &
+          echo $! > backend.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/ > /dev/null 2>&1; then
+              echo "Backend is ready"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/ > /dev/null
+
+      - name: Build the todo-frontend image
+        run: |
+          set -euo pipefail
+          docker build -t "$IMAGE_NAME" \
+            --build-arg VITE_BACKEND_URL=http://localhost:3000 \
+            todo-app/todo-frontend
+
+      - name: Run the todo-frontend container
+        run: |
+          set -euo pipefail
+          docker rm -f "$CONTAINER_NAME" > /dev/null 2>&1 || true
+          docker run -d --name "$CONTAINER_NAME" \
+            -p 5000:80 -p 8000:80 -p 8080:80 \
+            "$IMAGE_NAME"
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/ > /dev/null 2>&1; then
+              echo "Frontend is ready"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:8080/ > /dev/null
+
+      - name: Verify the frontend serves the todo application
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:8080/ | grep -qi "todo"
+          echo "Frontend serves the todo application"
+
+      - name: Verify the backend is reachable from the frontend configuration
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:3000/todos > /dev/null
+          echo "Backend API is reachable"
+
+      - name: Stop and remove the container
+        if: always()
+        run: |
+          docker stop "$CONTAINER_NAME" > /dev/null 2>&1 || true
+          docker rm "$CONTAINER_NAME" > /dev/null 2>&1 || true
+
+      - name: Stop the backend
+        if: always()
+        working-directory: ./todo-app/todo-backend
+        run: |
+          if [ -f backend.pid ]; then
+            kill $(cat backend.pid) 2>/dev/null || true
+          fi
+          rm -f backend.pid backend.log
+
+      - name: Stop services
+        if: always()
+        working-directory: ./todo-app/todo-backend
+        run: docker compose -f docker-compose.dev.yml down -v || true
