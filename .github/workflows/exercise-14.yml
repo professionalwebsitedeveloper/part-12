@@ -1,0 +1,60 @@
+name: "Exercise: 14"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-14:
+    name: Exercise 14 - Testing during the build process
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      IMAGE_NAME: todo-frontend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify the Todo component exists
+        run: |
+          set -euo pipefail
+          if [ -s todo-app/todo-frontend/src/Todos/Todo.jsx ]; then
+            echo "Todo component found (Todo.jsx)"
+          elif [ -s todo-app/todo-frontend/src/Todos/Todo.js ]; then
+            echo "Todo component found (Todo.js)"
+          else
+            echo "Todo component not found"
+            exit 1
+          fi
+
+      - name: Verify a test file exists
+        run: |
+          set -euo pipefail
+          if find todo-app/todo-frontend/src -type f \( -name '*.test.js' -o -name '*.test.jsx' -o -name '*.test.ts' -o -name '*.test.tsx' \) | grep -q .; then
+            echo "Test file found"
+          else
+            echo "No test file found"
+            exit 1
+          fi
+
+      - name: Verify the Dockerfile runs tests during build
+        run: |
+          set -euo pipefail
+          grep -Eq "npm (run )?test" todo-app/todo-frontend/Dockerfile
+          echo "Dockerfile runs tests during build"
+
+      - name: Build the todo-frontend image (tests run during build)
+        run: |
+          set -euo pipefail
+          docker build -t "$IMAGE_NAME" \
+            --build-arg VITE_BACKEND_URL=http://localhost:3000 \
+            todo-app/todo-frontend

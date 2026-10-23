@@ -9,6 +9,8 @@ RUN npm ci
 
 COPY . .
 
+RUN npm run test
+
 ARG VITE_BACKEND_URL=http://localhost:3000
 ENV VITE_BACKEND_URL=${VITE_BACKEND_URL}
 
