@@ -1,0 +1,64 @@
+name: "Exercise: 15"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-15:
+    name: Exercise 15 - Frontend development environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify the dev.Dockerfile exists
+        run: |
+          set -euo pipefail
+          test -s todo-app/todo-frontend/dev.Dockerfile
+          grep -q "npm run dev" todo-app/todo-frontend/dev.Dockerfile
+          echo "dev.Dockerfile found"
+
+      - name: Verify docker-compose.dev.yml exists
+        run: |
+          set -euo pipefail
+          test -s todo-app/todo-frontend/docker-compose.dev.yml
+          grep -q "volumes:" todo-app/todo-frontend/docker-compose.dev.yml
+          grep -q "./:/usr/src/app" todo-app/todo-frontend/docker-compose.dev.yml
+          echo "docker-compose.dev.yml found with volumes"
+
+      - name: Build the todo-frontend dev image
+        working-directory: ./todo-app/todo-frontend
+        run: |
+          set -euo pipefail
+          docker build -f dev.Dockerfile -t hello-front-dev .
+
+      - name: Start the frontend dev container
+        working-directory: ./todo-app/todo-frontend
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml up -d
+          echo "Waiting for Vite to be ready..."
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:5173/ > /dev/null 2>&1; then
+              echo "Frontend dev server is ready"
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://localhost:5173/ > /dev/null
+
+      - name: Verify the dev server serves the todo application
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:5173/ | grep -qi "todo"
+          echo "Frontend dev server serves the todo application"
+
+      - name: Stop the container
+        if: always()
+        working-directory: ./todo-app/todo-frontend
+        run: docker compose -f docker-compose.dev.yml down -v || true
