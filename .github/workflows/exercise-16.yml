@@ -1,0 +1,84 @@
+name: "Exercise: 16"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-16:
+    name: Exercise 16 - Backend development environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify the dev.Dockerfile exists
+        run: |
+          set -euo pipefail
+          test -s todo-app/todo-backend/dev.Dockerfile
+          grep -q "npm run dev" todo-app/todo-backend/dev.Dockerfile
+          echo "dev.Dockerfile found"
+
+      - name: Verify docker-compose.dev.yml exists
+        run: |
+          set -euo pipefail
+          test -s todo-app/todo-backend/docker-compose.dev.yml
+          grep -q "server:" todo-app/todo-backend/docker-compose.dev.yml
+          grep -q "volumes:" todo-app/todo-backend/docker-compose.dev.yml
+          grep -q "./:/usr/src/app" todo-app/todo-backend/docker-compose.dev.yml
+          grep -q "MONGO_URL=mongodb://the_username:the_password@mongo:27017/the_database" todo-app/todo-backend/docker-compose.dev.yml
+          grep -q "REDIS_URL=redis://redis:6379" todo-app/todo-backend/docker-compose.dev.yml
+          echo "docker-compose.dev.yml found with volumes and environment"
+
+      - name: Build the todo-backend dev image
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          docker build -f dev.Dockerfile -t hello-backend-dev .
+
+      - name: Clean previous data
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml down -v || true
+          sudo rm -rf redis_data
+          mkdir -p redis_data
+          sudo chmod 777 redis_data
+
+      - name: Start the backend dev container
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml up -d
+          echo "Waiting for the backend to be ready..."
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/ > /dev/null 2>&1; then
+              echo "Backend dev server is ready"
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://localhost:3000/ > /dev/null
+
+      - name: Verify the backend connects to Redis
+        working-directory: ./todo-app/todo-backend
+        run: |
+          set -euo pipefail
+          sleep 3
+          docker compose -f docker-compose.dev.yml logs server | grep -q "Connected to Redis"
+          echo "Backend connected to Redis"
+
+      - name: Verify the backend serves todos from MongoDB
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:3000/todos | grep -q "Write code"
+          echo "Backend serves todos from MongoDB"
+
+      - name: Stop the container
+        if: always()
+        working-directory: ./todo-app/todo-backend
+        run: docker compose -f docker-compose.dev.yml down -v || true
