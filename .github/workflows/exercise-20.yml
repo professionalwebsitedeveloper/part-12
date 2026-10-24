@@ -1,0 +1,115 @@
+name: "Exercise: 20"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-20:
+    name: Exercise 20 - Create a production todo-app
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify nginx.conf exists
+        run: |
+          set -euo pipefail
+          test -s todo-app/nginx.conf
+          grep -q "proxy_pass http://app" todo-app/nginx.conf
+          grep -q "proxy_pass http://backend:3000/" todo-app/nginx.conf
+          grep -q "location /api/" todo-app/nginx.conf
+          echo "nginx.conf found"
+
+      - name: Verify docker-compose.yml exists
+        run: |
+          set -euo pipefail
+          test -s todo-app/docker-compose.yml
+          grep -q "nginx:" todo-app/docker-compose.yml
+          grep -q "image: nginx:1.29" todo-app/docker-compose.yml
+          grep -q "./nginx.conf:/etc/nginx/nginx.conf:ro" todo-app/docker-compose.yml
+          grep -q "8080:80" todo-app/docker-compose.yml
+          grep -q "app:" todo-app/docker-compose.yml
+          grep -q "backend:" todo-app/docker-compose.yml
+          grep -q "mongo:" todo-app/docker-compose.yml
+          grep -q "redis:" todo-app/docker-compose.yml
+          grep -q "Dockerfile" todo-app/docker-compose.yml
+          echo "docker-compose.yml found with all services"
+
+      - name: Verify production Dockerfiles are used
+        run: |
+          set -euo pipefail
+          if grep -n "dev.Dockerfile" todo-app/docker-compose.yml; then
+            echo "dev.Dockerfile should not be used in production"
+            exit 1
+          fi
+          echo "Production Dockerfiles are used"
+
+      - name: Build the production images
+        working-directory: ./todo-app
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml build
+
+      - name: Clean previous data
+        working-directory: ./todo-app
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml down -v || true
+          sudo rm -rf todo-backend/redis_data
+          mkdir -p todo-backend/redis_data
+          sudo chmod 777 todo-backend/redis_data
+
+      - name: Start the production containers
+        working-directory: ./todo-app
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml up -d
+          echo "Waiting for Nginx to be ready..."
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/ > /dev/null 2>&1; then
+              echo "Nginx reverse proxy is ready"
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8080/ > /dev/null
+          echo "Waiting for backend API to be ready..."
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/api/todos > /dev/null 2>&1; then
+              echo "Backend API is ready"
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8080/api/todos > /dev/null
+
+      - name: Verify the reverse proxy serves the frontend
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:8080/ | grep -qi "todo"
+          echo "Reverse proxy serves the todo frontend"
+
+      - name: Verify the backend is reachable through Nginx
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:8080/api/todos | grep -q "Write code"
+          echo "Backend API is reachable through Nginx"
+
+      - name: Verify direct backend access does not work
+        run: |
+          set -euo pipefail
+          if curl -fsS --max-time 5 http://localhost:3000/todos > /dev/null 2>&1; then
+            echo "Direct backend access should not work"
+            exit 1
+          fi
+          echo "Direct backend access is disabled"
+
+      - name: Stop the containers
+        if: always()
+        working-directory: ./todo-app
+        run: docker compose -f docker-compose.yml down -v || true
