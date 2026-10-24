@@ -81,6 +81,15 @@ jobs:
             sleep 2
           done
           curl -fsS http://localhost:8080/ > /dev/null
+          echo "Waiting for backend API to be ready..."
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/api/todos > /dev/null 2>&1; then
+              echo "Backend API is ready"
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8080/api/todos > /dev/null
 
       - name: Verify the reverse proxy serves the frontend
         run: |
