@@ -18,6 +18,7 @@ services:
     volumes:
       - ./redis_data:/data
   server:
+    profiles: ["dev"]
     image: hello-backend-dev
     build:
       context: .
