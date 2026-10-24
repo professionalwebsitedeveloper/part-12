@@ -1,0 +1,75 @@
+name: "Exercise: 17"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-17:
+    name: Exercise 17 - Nginx reverse proxy in front of todo-frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify nginx.dev.conf exists
+        run: |
+          set -euo pipefail
+          test -s todo-app/nginx.dev.conf
+          grep -q "proxy_pass http://app:5173" todo-app/nginx.dev.conf
+          echo "nginx.dev.conf found"
+
+      - name: Verify docker-compose.dev.yml exists
+        run: |
+          set -euo pipefail
+          test -s todo-app/docker-compose.dev.yml
+          grep -q "nginx:" todo-app/docker-compose.dev.yml
+          grep -q "image: nginx:1.29" todo-app/docker-compose.dev.yml
+          grep -q "./nginx.dev.conf:/etc/nginx/nginx.conf:ro" todo-app/docker-compose.dev.yml
+          grep -q "8080:80" todo-app/docker-compose.dev.yml
+          grep -q "reverse-proxy" todo-app/docker-compose.dev.yml
+          grep -q "depends_on:" todo-app/docker-compose.dev.yml
+          grep -q "dev.Dockerfile" todo-app/docker-compose.dev.yml
+          echo "docker-compose.dev.yml found with nginx and frontend"
+
+      - name: Build the todo-frontend dev image
+        working-directory: ./todo-app/todo-frontend
+        run: |
+          set -euo pipefail
+          docker build -f dev.Dockerfile -t hello-front-dev .
+
+      - name: Clean previous data
+        working-directory: ./todo-app
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml down -v || true
+
+      - name: Start the dev containers
+        working-directory: ./todo-app
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml up -d
+          echo "Waiting for Nginx to be ready..."
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/ > /dev/null 2>&1; then
+              echo "Nginx reverse proxy is ready"
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8080/ > /dev/null
+
+      - name: Verify the reverse proxy serves the frontend
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:8080/ | grep -qi "todo"
+          echo "Reverse proxy serves the todo frontend"
+
+      - name: Stop the containers
+        if: always()
+        working-directory: ./todo-app
+        run: docker compose -f docker-compose.dev.yml down -v || true
