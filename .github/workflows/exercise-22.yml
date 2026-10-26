@@ -1,0 +1,134 @@
+name: "Exercise: 22"
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  exercise-22:
+    name: Exercise 22 - My containerized dev env
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify dev.Dockerfiles exist
+        run: |
+          set -euo pipefail
+          test -s my-app/frontend/dev.Dockerfile
+          grep -q "npm run dev" my-app/frontend/dev.Dockerfile
+          test -s my-app/backend/dev.Dockerfile
+          grep -q "npm run dev" my-app/backend/dev.Dockerfile
+          echo "dev.Dockerfiles found"
+
+      - name: Verify nginx.dev.conf exists
+        run: |
+          set -euo pipefail
+          test -s my-app/nginx.dev.conf
+          grep -q "proxy_pass http://app:5173" my-app/nginx.dev.conf
+          grep -q "proxy_pass http://server:3000/" my-app/nginx.dev.conf
+          grep -q "location /api/" my-app/nginx.dev.conf
+          echo "nginx.dev.conf found"
+
+      - name: Verify docker-compose.dev.yml exists
+        run: |
+          set -euo pipefail
+          test -s my-app/docker-compose.dev.yml
+          grep -q "nginx:" my-app/docker-compose.dev.yml
+          grep -q "image: nginx:1.29" my-app/docker-compose.dev.yml
+          grep -q "./nginx.dev.conf:/etc/nginx/nginx.conf:ro" my-app/docker-compose.dev.yml
+          grep -q "8080:80" my-app/docker-compose.dev.yml
+          grep -q "reverse-proxy" my-app/docker-compose.dev.yml
+          grep -q "depends_on:" my-app/docker-compose.dev.yml
+          grep -q "dev.Dockerfile" my-app/docker-compose.dev.yml
+          grep -q "VITE_BACKEND_URL=http://localhost:8080/api" my-app/docker-compose.dev.yml
+          echo "docker-compose.dev.yml found"
+
+      - name: Verify ports are removed from non-nginx services
+        run: |
+          set -euo pipefail
+          if grep -n "3000:3000" my-app/docker-compose.dev.yml; then
+            echo "Backend port should not be exposed"
+            exit 1
+          fi
+          if grep -n "5173:5173" my-app/docker-compose.dev.yml; then
+            echo "Frontend port should not be exposed"
+            exit 1
+          fi
+          echo "Only Nginx exposes ports"
+
+      - name: Verify README.md exists with a link
+        run: |
+          set -euo pipefail
+          test -s README.md
+          grep -q "http" README.md
+          echo "README.md found with link"
+
+      - name: Build the dev images
+        working-directory: ./my-app
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml build
+
+      - name: Clean previous data
+        working-directory: ./my-app
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml down -v || true
+          sudo rm -rf backend/redis_data
+          mkdir -p backend/redis_data
+          sudo chmod 777 backend/redis_data
+
+      - name: Start the dev containers
+        working-directory: ./my-app
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml up -d
+          echo "Waiting for Nginx to be ready..."
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/ > /dev/null 2>&1; then
+              echo "Nginx reverse proxy is ready"
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8080/ > /dev/null
+          echo "Waiting for backend API to be ready..."
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/api/todos > /dev/null 2>&1; then
+              echo "Backend API is ready"
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8080/api/todos > /dev/null
+
+      - name: Verify the reverse proxy serves the frontend
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:8080/ | grep -qi "todo"
+          echo "Reverse proxy serves the frontend"
+
+      - name: Verify the backend is reachable through Nginx
+        run: |
+          set -euo pipefail
+          curl -fsS http://localhost:8080/api/todos | grep -q "Write code"
+          echo "Backend API is reachable through Nginx"
+
+      - name: Verify direct backend access does not work
+        run: |
+          set -euo pipefail
+          if curl -fsS --max-time 5 http://localhost:3000/todos > /dev/null 2>&1; then
+            echo "Direct backend access should not work"
+            exit 1
+          fi
+          echo "Direct backend access is disabled"
+
+      - name: Stop the containers
+        if: always()
+        working-directory: ./my-app
+        run: docker compose -f docker-compose.dev.yml down -v || true
